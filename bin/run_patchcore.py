@@ -19,14 +19,16 @@ LOGGER = logging.getLogger(__name__)
 _DATASETS = {"mvtec": ["patchcore.datasets.mvtec", "MVTecDataset"]}
 
 
+# 定义一个命令集合，下面可以再注册多个子命令
 @click.group(chain=True)
-@click.argument("results_path", type=str)
-@click.option("--gpu", type=int, default=[0], multiple=True, show_default=True)
-@click.option("--seed", type=int, default=0, show_default=True)
-@click.option("--log_group", type=str, default="group")
-@click.option("--log_project", type=str, default="project")
-@click.option("--save_segmentation_images", is_flag=True)
-@click.option("--save_patchcore_model", is_flag=True)
+#  argument通常少量（1-2），必须参数，必须按顺序写；option通常较多（3个及以上），可选参数，不需要按顺序写
+@click.argument("results_path", type=str) # 结果保存路径
+@click.option("--gpu", type=int, default=[0], multiple=True, show_default=True) # 使用的GPU编号
+@click.option("--seed", type=int, default=0, show_default=True) # 随机种子
+@click.option("--log_group", type=str, default="group") # 日志组别
+@click.option("--log_project", type=str, default="project") # 日志项目名称
+@click.option("--save_segmentation_images", is_flag=True) # 是否保存分割图像
+@click.option("--save_patchcore_model", is_flag=True) # 是否保存PatchCore模型
 def main(**kwargs):
     pass
 
@@ -236,26 +238,26 @@ def run(
         row_names=result_dataset_names,
     )
 
-
-@main.command("patch_core")
+# 当用户在命令行输入 patch_core 子命令时，调用此函数
+@main.command("patch_core") 
 # Pretraining-specific parameters.
-@click.option("--backbone_names", "-b", type=str, multiple=True, default=[])
-@click.option("--layers_to_extract_from", "-le", type=str, multiple=True, default=[])
+@click.option("--backbone_names", "-b", type=str, multiple=True, default=[]) # 使用的backbone名称
+@click.option("--layers_to_extract_from", "-le", type=str, multiple=True, default=[]) # 从哪些层提取特征
 # Parameters for Glue-code (to merge different parts of the pipeline.
-@click.option("--pretrain_embed_dimension", type=int, default=1024)
-@click.option("--target_embed_dimension", type=int, default=1024)
-@click.option("--preprocessing", type=click.Choice(["mean", "conv"]), default="mean")
-@click.option("--aggregation", type=click.Choice(["mean", "mlp"]), default="mean")
+@click.option("--pretrain_embed_dimension", type=int, default=1024) # 预训练嵌入维度（即 backbone 输出的通道数, 一般不需要改）,把高维特征投影到一个更低维的空间
+@click.option("--target_embed_dimension", type=int, default=1024) # 目标嵌入维度,将预训练模型输出的特征（pretrain embedding）通过一个线性映射（或降维层）投影到的目标特征维度
+@click.option("--preprocessing", type=click.Choice(["mean", "conv"]), default="mean") # 预处理方法，如均值或卷积
+@click.option("--aggregation", type=click.Choice(["mean", "mlp"]), default="mean") # 聚合方法，如均值或多层感知机
 # Nearest-Neighbour Anomaly Scorer parameters.
-@click.option("--anomaly_scorer_num_nn", type=int, default=5)
+@click.option("--anomaly_scorer_num_nn", type=int, default=5) # 最近邻数量
 # Patch-parameters.
-@click.option("--patchsize", type=int, default=3)
-@click.option("--patchscore", type=str, default="max")
-@click.option("--patchoverlap", type=float, default=0.0)
-@click.option("--patchsize_aggregate", "-pa", type=int, multiple=True, default=[])
+@click.option("--patchsize", type=int, default=3) # 补丁大小
+@click.option("--patchscore", type=str, default="max") # 补丁评分方法
+@click.option("--patchoverlap", type=float, default=0.0) # 补丁重叠比例
+@click.option("--patchsize_aggregate", "-pa", type=int, multiple=True, default=[]) # 聚合补丁大小
 # NN on GPU.
-@click.option("--faiss_on_gpu", is_flag=True)
-@click.option("--faiss_num_workers", type=int, default=8)
+@click.option("--faiss_on_gpu", is_flag=True) # 是否在GPU上使用Faiss
+@click.option("--faiss_num_workers", type=int, default=8) # Faiss使用的工作线程数量
 def patch_core(
     backbone_names,
     layers_to_extract_from,
@@ -430,6 +432,53 @@ def dataset(
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    # # 设置日志系统的基础配置，让程序里的 logging.info(...)、logging.warning(...) 等语句能在控制台输出。
+    # logging.basicConfig(level=logging.INFO)
+
+    # --------------------------
+    import datetime
+
+    # ===== 交互选择日志去向 =====
+    try:
+        choice = input("日志输出到哪里？[yes=控制台, no=文件, 回车=控制台+文件] ").strip().lower()
+    except EOFError:
+        # 有些非交互环境（比如某些 IDE 配置）拿不到输入，默认双写
+        choice = ""
+
+    # 日志文件名（你也可以改成放在 results 目录，简单起见先放当前目录）
+    log_file = os.path.abspath("patchcore_run.log")
+
+    # 拿到 root logger 并清空默认 handler，避免重复打印
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+
+    # 统一的日志格式
+    fmt = logging.Formatter(
+        "[%(asctime)s] %(levelname)s - %(name)s: %(message)s", datefmt="%H:%M:%S"
+    )
+
+    # 控制台/文件 handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(fmt)
+    file_handler = logging.FileHandler(log_file, mode="w", encoding="utf-8")
+    file_handler.setFormatter(fmt)
+
+    # 根据选择添加 handler
+    if choice in ("yes", "y"):
+        logger.addHandler(console_handler)
+        print("✅ 日志仅输出到控制台。")
+    elif choice in ("no", "n"):
+        logger.addHandler(file_handler)
+        print(f"✅ 日志仅输出到文件：{log_file}")
+    else:
+        logger.addHandler(console_handler)
+        logger.addHandler(file_handler)
+        print(f"✅ 日志将同时输出到控制台和文件：{log_file}")
+
+    # 下面照常启动程序
+    # --------------------------
+
+    # 打印命令行参数
     LOGGER.info("Command line arguments: {}".format(" ".join(sys.argv)))
     main()
