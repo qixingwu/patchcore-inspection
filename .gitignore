@@ -1,3 +1,7 @@
 .idea/
 __pycache__/
 LabletAnomaly.egg-info/
+
+# ignore generated results
+results/
+*.faiss
