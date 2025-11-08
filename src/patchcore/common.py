@@ -11,6 +11,7 @@ import torch
 import torch.nn.functional as F
 
 
+# 最近邻搜索（精确版）
 class FaissNN(object):
     def __init__(self, on_gpu: bool = False, num_workers: int = 4) -> None:
         """FAISS Nearest neighbourhood search.
@@ -21,12 +22,12 @@ class FaissNN(object):
         """
         faiss.omp_set_num_threads(num_workers)
         self.on_gpu = on_gpu
-        self.search_index = None
+        self.search_index = None # 保存搜索索引
 
-    def _gpu_cloner_options(self):
+    def _gpu_cloner_options(self): # 若要把 CPU 索引拷到 GPU，需要一个拷贝选项对象。
         return faiss.GpuClonerOptions()
 
-    def _index_to_gpu(self, index):
+    def _index_to_gpu(self, index):  # 根据 on_gpu 决定是否把 CPU 索引迁移到 GPU（使用 0 号 GPU）
         if self.on_gpu:
             # For the non-gpu faiss python package, there is no GpuClonerOptions
             # so we can not make a default in the function header.
@@ -35,32 +36,32 @@ class FaissNN(object):
             )
         return index
 
-    def _index_to_cpu(self, index):
+    def _index_to_cpu(self, index): # 反向迁移：把 GPU 索引拷回 CPU（用于保存）
         if self.on_gpu:
             return faiss.index_gpu_to_cpu(index)
         return index
 
-    def _create_index(self, dimension):
+    def _create_index(self, dimension): # 创建 精确 L2 的平坦索引（FlatL2），GPU/CPU 两套版本
         if self.on_gpu:
             return faiss.GpuIndexFlatL2(
                 faiss.StandardGpuResources(), dimension, faiss.GpuIndexFlatConfig()
             )
         return faiss.IndexFlatL2(dimension)
 
-    def fit(self, features: np.ndarray) -> None:
+    def fit(self, features: np.ndarray) -> None:  # 把特征加入索引。
         """
         Adds features to the FAISS search index.
 
         Args:
             features: Array of size NxD.
         """
-        if self.search_index:
+        if self.search_index: # 若已有旧索引，先清空。
             self.reset_index()
-        self.search_index = self._create_index(features.shape[-1])
-        self._train(self.search_index, features)
-        self.search_index.add(features)
+        self.search_index = self._create_index(features.shape[-1]) # 按特征维度创建索引。
+        self._train(self.search_index, features) # 可选的训练步骤（Flat 索引不需要，留空函数以便子类覆盖）。
+        self.search_index.add(features) # 把特征向量加到索引中。
 
-    def _train(self, _index, _features):
+    def _train(self, _index, _features): # 占位；精确索引无需训练。
         pass
 
     def run(
@@ -68,7 +69,7 @@ class FaissNN(object):
         n_nearest_neighbours,
         query_features: np.ndarray,
         index_features: np.ndarray = None,
-    ) -> Union[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> Union[np.ndarray, np.ndarray, np.ndarray]:    # 执行最近邻搜索。可在已有索引上查，也可临时建立一个索引在给定 index_features 上查。
         """
         Returns distances and indices of nearest neighbour search.
 
@@ -76,22 +77,22 @@ class FaissNN(object):
             query_features: Features to retrieve.
             index_features: [optional] Index features to search in.
         """
-        if index_features is None:
+        if index_features is None: # 默认使用 fit 好的全局索引。
             return self.search_index.search(query_features, n_nearest_neighbours)
 
-        # Build a search index just for this search.
+        # Build a search index just for this search. 如果传入了 index_features，就新建临时索引做一次性检索（常用于像素级 K=1 NN）。
         search_index = self._create_index(index_features.shape[-1])
         self._train(search_index, index_features)
         search_index.add(index_features)
         return search_index.search(query_features, n_nearest_neighbours)
 
-    def save(self, filename: str) -> None:
+    def save(self, filename: str) -> None: # 保存索引（若在 GPU 上，先拷回 CPU）。
         faiss.write_index(self._index_to_cpu(self.search_index), filename)
 
-    def load(self, filename: str) -> None:
+    def load(self, filename: str) -> None: # 从磁盘读回索引，并按需迁到 GPU。
         self.search_index = self._index_to_gpu(faiss.read_index(filename))
 
-    def reset_index(self):
+    def reset_index(self): # 清空索引，释放内存
         if self.search_index:
             self.search_index.reset()
             self.search_index = None
@@ -108,27 +109,27 @@ class ApproximateFaissNN(FaissNN):
 
     def _create_index(self, dimension):
         index = faiss.IndexIVFPQ(
-            faiss.IndexFlatL2(dimension),
-            dimension,
-            512,  # n_centroids
-            64,  # sub-quantizers
-            8,
-        )  # nbits per code
+            faiss.IndexFlatL2(dimension), # # 量化器（coarse quantizer），用L2把向量粗分到nlist个簇
+            dimension,                    # 向量维度 D
+            512,  # n_centroids    倒排桶个数（质心数量）
+            64,  # sub-quantizers  子量化器个数（把D维切成m段）
+            8,   # nbits per code 每段用多少比特编码
+        )  
         return self._index_to_gpu(index)
 
 
-class _BaseMerger:
+class _BaseMerger: # 定义合并多个层/特征图的基类。
     def __init__(self):
         """Merges feature embedding by name."""
 
-    def merge(self, features: list):
-        features = [self._reduce(feature) for feature in features]
+    def merge(self, features: list): # 对每个特征先 _reduce 成二维（N×D），再在通道维度拼接。
+        features = [self._reduce(feature) for feature in features] # 虽然基类没实现 _reduce，但子类都实现了。运行时不会报错，这就是 Python 动态绑定 + 多态 的体现。类的方法调用是动态解析的；只有在 真正调用到那一行时，解释器才去找 self._reduce；而此时 self 实际上是 子类的实例对象。
         return np.concatenate(features, axis=1)
 
 
-class AverageMerger(_BaseMerger):
+class AverageMerger(_BaseMerger): 
     @staticmethod
-    def _reduce(features):
+    def _reduce(features): # 把一个四维特征张量 (N, C, W, H)   平均池化到二维 (N, C)
         # NxCxWxH -> NxC
         return features.reshape([features.shape[0], features.shape[1], -1]).mean(
             axis=-1
@@ -137,7 +138,7 @@ class AverageMerger(_BaseMerger):
 
 class ConcatMerger(_BaseMerger):
     @staticmethod
-    def _reduce(features):
+    def _reduce(features): # 直接把空间维展平并与通道拼一起，得到更长的向量（信息保留多、维度更高）。Numpy 默认行优先
         # NxCxWxH -> NxCWH
         return features.reshape(len(features), -1)
 

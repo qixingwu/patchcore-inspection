@@ -20,7 +20,7 @@ _DATASETS = {"mvtec": ["patchcore.datasets.mvtec", "MVTecDataset"]}
 
 
 # 定义一个命令集合，下面可以再注册多个子命令
-@click.group(chain=True)
+@click.group(chain=True) #跑完链中的每个子命令（收集返回值），最后把这些返回值一次性交给 result_callback
 #  argument通常少量（1-2），必须参数，必须按顺序写；option通常较多（3个及以上），可选参数，不需要按顺序写
 @click.argument("results_path", type=str) # 结果保存路径
 @click.option("--gpu", type=int, default=[0], multiple=True, show_default=True) # 使用的GPU编号
@@ -273,7 +273,7 @@ def patch_core(
     faiss_on_gpu,
     faiss_num_workers,
 ):
-    backbone_names = list(backbone_names)
+    backbone_names = list(backbone_names) #Click 的 multiple=True 选项会把参数当元组，这里转成 list，后续好处理。
     if len(backbone_names) > 1:
         layers_to_extract_from_coll = [[] for _ in range(len(backbone_names))]
         for layer in layers_to_extract_from:
@@ -294,9 +294,9 @@ def patch_core(
                     backbone_name.split("-")[-1]
                 )
             backbone = patchcore.backbones.load(backbone_name)
-            backbone.name, backbone.seed = backbone_name, backbone_seed
+            backbone.name, backbone.seed = backbone_name, backbone_seed # 在 Python 中，大多数对象（尤其是自定义类的实例）都是动态可扩展的
 
-            nn_method = patchcore.common.FaissNN(faiss_on_gpu, faiss_num_workers)
+            nn_method = patchcore.common.FaissNN(faiss_on_gpu, faiss_num_workers) #构造基于 Faiss 的最近邻搜索器，支持 GPU/多线程。
 
             patchcore_instance = patchcore.patchcore.PatchCore(device)
             patchcore_instance.load(
@@ -446,7 +446,7 @@ if __name__ == "__main__":
         choice = ""
 
     # 日志文件名（你也可以改成放在 results 目录，简单起见先放当前目录）
-    log_file = os.path.abspath("patchcore_run.log")
+    log_file = os.path.abspath("../log/patchcore_run.log")
 
     # 拿到 root logger 并清空默认 handler，避免重复打印
     logger = logging.getLogger()
