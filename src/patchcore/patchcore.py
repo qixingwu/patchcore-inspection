@@ -275,6 +275,9 @@ class PatchCore(torch.nn.Module):
 
 # Image handling classes.
 class PatchMaker:
+    """
+    把一张（或多张）特征图切成很多小块 patch，并对这些 patch 的结果做一些整合。
+    """
     def __init__(self, patchsize, stride=None):
         self.patchsize = patchsize
         self.stride = stride
@@ -308,9 +311,15 @@ class PatchMaker:
         return unfolded_features
 
     def unpatch_scores(self, x, batchsize):
+        """
+        把拍扁过的 patch 分数，重新按 batch 组织好。
+        """
         return x.reshape(batchsize, -1, *x.shape[1:])
 
     def score(self, x):
+        """
+        把一个多维数组/张量，逐维做 max pooling，最后压缩成较低维度的分数。
+        """
         was_numpy = False
         if isinstance(x, np.ndarray):
             was_numpy = True

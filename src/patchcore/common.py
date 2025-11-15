@@ -138,13 +138,13 @@ class AverageMerger(_BaseMerger):
 
 class ConcatMerger(_BaseMerger):
     @staticmethod
-    def _reduce(features): # 直接把空间维展平并与通道拼一起，得到更长的向量（信息保留多、维度更高）。Numpy 默认行优先
+    def _reduce(features): # 直接把空间维展平并与通道拼一起，得到更长的向量（信息保留多、维度更高）。Numpy 默认行优先,最先变化的是 H（列）;然后是 W（行）;最后是 C（通道）
         # NxCxWxH -> NxCWH
         return features.reshape(len(features), -1)
 
 
-class Preprocessing(torch.nn.Module):
-    def __init__(self, input_dims, output_dim):
+class Preprocessing(torch.nn.Module): # 特征预处理模块，把每个层的特征都映射到同一维度。
+    def __init__(self, input_dims, output_dim): #对每个输入分支（不同层/不同特征源）放一个 MeanMapper。
         super(Preprocessing, self).__init__()
         self.input_dims = input_dims
         self.output_dim = output_dim
@@ -154,7 +154,7 @@ class Preprocessing(torch.nn.Module):
             module = MeanMapper(output_dim)
             self.preprocessing_modules.append(module)
 
-    def forward(self, features):
+    def forward(self, features): #逐分支处理后，在维度 1 上堆叠（形如 batch × 分支数 × out_dim）
         _features = []
         for module, feature in zip(self.preprocessing_modules, features):
             _features.append(module(feature))
@@ -167,8 +167,8 @@ class MeanMapper(torch.nn.Module):
         self.preprocessing_dim = preprocessing_dim
 
     def forward(self, features):
-        features = features.reshape(len(features), 1, -1)
-        return F.adaptive_avg_pool1d(features, self.preprocessing_dim).squeeze(1)
+        features = features.reshape(len(features), 1, -1) # 给每个样本的特征向量加一个“通道维”1，变成 (N, 1, D)，F.adaptive_avg_pool1d（一维自适应平均池化）要求输入的形状是：[batch_size, channels, length]
+        return F.adaptive_avg_pool1d(features, self.preprocessing_dim).squeeze(1) # 去掉第 1 个维度（也就是那个人工加的“通道维”1）
 
 
 class Aggregator(torch.nn.Module):
