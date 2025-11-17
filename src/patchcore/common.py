@@ -122,14 +122,14 @@ class _BaseMerger: # 定义合并多个层/特征图的基类。
     def __init__(self):
         """Merges feature embedding by name."""
 
-    def merge(self, features: list): # 对每个特征先 _reduce 成二维（N×D），再在通道维度拼接。
+    def merge(self, features: list): # 每个特征先 reduce 成二维 (N, D_i)，然后在通道方向拼接 → (N, D1 + D2 + ... + Dk)
         features = [self._reduce(feature) for feature in features] # 虽然基类没实现 _reduce，但子类都实现了。运行时不会报错，这就是 Python 动态绑定 + 多态 的体现。类的方法调用是动态解析的；只有在 真正调用到那一行时，解释器才去找 self._reduce；而此时 self 实际上是 子类的实例对象。
         return np.concatenate(features, axis=1)
 
 
 class AverageMerger(_BaseMerger): 
     @staticmethod
-    def _reduce(features): # 把一个四维特征张量 (N, C, W, H)   平均池化到二维 (N, C)
+    def _reduce(features): # 把一个四维特征张量 (N, C, W, H)   平均池化到二维 (N, D_i)
         # NxCxWxH -> NxC
         return features.reshape([features.shape[0], features.shape[1], -1]).mean(
             axis=-1
@@ -210,7 +210,23 @@ class RescaleSegmentor:
 
 
 class NetworkFeatureAggregator(torch.nn.Module):
-    """Efficient extraction of network features."""
+    """Efficient extraction of network features. 高效地从 backbone 里的指定层，提取中间特征 feature maps。
+    NetworkFeatureAggregator 负责：
+        给一个 backbone（如 ResNet）
+        和一组字符串形式的层名 layers_to_extract_from（比如 ["layer2.3", "layer3", "layer4"]）
+        它会：
+        在这些层上挂 forward hook
+        当你 backbone(images) 时，自动把中间特征收集到 self.outputs 这个字典里
+        支持提早停止：跑到最后一个指定层就可以抛异常终止，不再多算后面的层，提高效率
+        最终，它的 forward(images) 返回的不是 logits，而是：
+        {
+            "layer2.3": tensor(...),
+            "layer3":   tensor(...),
+            "layer4":   tensor(...)
+        }
+        所以这个类就是一个：
+        ✅ “帮你从指定层高效抽特征的包装器（wrapper）”。
+    """
 
     def __init__(self, backbone, layers_to_extract_from, device):
         super(NetworkFeatureAggregator, self).__init__()
