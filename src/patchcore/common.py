@@ -158,25 +158,35 @@ class Preprocessing(torch.nn.Module): # 特征预处理模块，把每个层的�
         _features = []
         for module, feature in zip(self.preprocessing_modules, features):
             _features.append(module(feature))
-        return torch.stack(_features, dim=1)
+        return torch.stack(_features, dim=1) # batch x number_of_layers x preprocessing_dim,把一个“装着多个张量的列表”变成“一个真正的多维张量”。
 
 
 class MeanMapper(torch.nn.Module):
+    """
+    用自适应平均池化，把任意长度的特征向量变成固定长度 preprocessing_dim。
+    不需要额外学习参数（比如不用线性层/MLP）,只用一个简单的 pooling，就把不同维的特征拉到同一个长度
+    保持 PatchCore 的一个特点：几乎“无训练”，主要依赖 backbone 的预训练特征
+    """
     def __init__(self, preprocessing_dim):
         super(MeanMapper, self).__init__()
         self.preprocessing_dim = preprocessing_dim
 
     def forward(self, features):
         features = features.reshape(len(features), 1, -1) # 给每个样本的特征向量加一个“通道维”1，变成 (N, 1, D)，F.adaptive_avg_pool1d（一维自适应平均池化）要求输入的形状是：[batch_size, channels, length]
-        return F.adaptive_avg_pool1d(features, self.preprocessing_dim).squeeze(1) # 去掉第 1 个维度（也就是那个人工加的“通道维”1）
+        return F.adaptive_avg_pool1d(features, self.preprocessing_dim).squeeze(1) # 去掉第 1 个维度（也就是那个人工加的“通道维”1）,不管现在的 length = D 是多少,通过自适应平均池化，把它变成长度 self.preprocessing_dim（比如 256）
 
 
 class Aggregator(torch.nn.Module):
+    """
+    把“多层特征”整合成一个统一长度的一维向量。
+    把多层信息展平（flatten）→ 用自适应平均池化压缩到 target_dim → 输出最终的特征向量
+    PatchCore 想要最终得到：每个样本只有一个向量（用于构建记忆库）,这个向量必须是 固定长度（方便最近邻搜索）,但多个层的特征不能简单相加／相减，需要一种不破坏分支数量的融合方式
+    """
     def __init__(self, target_dim):
         super(Aggregator, self).__init__()
         self.target_dim = target_dim
 
-    def forward(self, features):
+    def forward(self, features): #(N, L, D) -> (N, target_dim)
         """Returns reshaped and average pooled features."""
         # batchsize x number_of_layers x input_dim -> batchsize x target_dim
         features = features.reshape(len(features), 1, -1)
@@ -185,10 +195,14 @@ class Aggregator(torch.nn.Module):
 
 
 class RescaleSegmentor:
+    """
+    PatchCore 输出：低分辨率 patch grid,你最终要：与图片一样大的 heatmap（例如 224×224）
+    所以需要把低分辨率的 patch score 图放大并平滑 → 得到最终的像素级异常图
+    """
     def __init__(self, device, target_size=224):
         self.device = device
         self.target_size = target_size
-        self.smoothing = 4
+        self.smoothing = 4 #高斯滤波时的 sigma，越大越模糊
 
     def convert_to_segmentation(self, patch_scores):
 
@@ -196,17 +210,17 @@ class RescaleSegmentor:
             if isinstance(patch_scores, np.ndarray):
                 patch_scores = torch.from_numpy(patch_scores)
             _scores = patch_scores.to(self.device)
-            _scores = _scores.unsqueeze(1)
+            _scores = _scores.unsqueeze(1) #(N, H, W) -> (N, 1, H, W)
             _scores = F.interpolate(
                 _scores, size=self.target_size, mode="bilinear", align_corners=False
-            )
-            _scores = _scores.squeeze(1)
+            ) # 用双线性插值把 patch-level score 图放大成 target_size × target_size。
+            _scores = _scores.squeeze(1) # 把 "(N, 1, H, W)" → "(N, H, W)"
             patch_scores = _scores.cpu().numpy()
 
         return [
             ndimage.gaussian_filter(patch_score, sigma=self.smoothing)
             for patch_score in patch_scores
-        ]
+        ] # 进行高斯平滑（Gaussian Blur）
 
 
 class NetworkFeatureAggregator(torch.nn.Module):
@@ -242,38 +256,38 @@ class NetworkFeatureAggregator(torch.nn.Module):
         self.layers_to_extract_from = layers_to_extract_from
         self.backbone = backbone
         self.device = device
-        if not hasattr(backbone, "hook_handles"):
+        if not hasattr(backbone, "hook_handles"): # 准备 hook 句柄列表
             self.backbone.hook_handles = []
-        for handle in self.backbone.hook_handles:
+        for handle in self.backbone.hook_handles: # 避初始化时，先把旧的 hook 全部移除
             handle.remove()
-        self.outputs = {}
+        self.outputs = {} # 所有 hook 得到的中间特征都会写进这个字典。
 
         for extract_layer in layers_to_extract_from:
             forward_hook = ForwardHook(
                 self.outputs, extract_layer, layers_to_extract_from[-1]
-            )
-            if "." in extract_layer:
+            ) # 创建一个前向钩子实例
+            if "." in extract_layer: #包含.，说明要提取的层在子模块里
                 extract_block, extract_idx = extract_layer.split(".")
-                network_layer = backbone.__dict__["_modules"][extract_block]
-                if extract_idx.isnumeric():
+                network_layer = backbone.__dict__["_modules"][extract_block] # 先取出子模块
+                if extract_idx.isnumeric(): # 如果是数字，说明子模块是个序列容器，要按索引取
                     extract_idx = int(extract_idx)
                     network_layer = network_layer[extract_idx]
-                else:
+                else: # 否则按名字取（比如 "conv1"）
                     network_layer = network_layer.__dict__["_modules"][extract_idx]
-            else:
+            else: 
                 network_layer = backbone.__dict__["_modules"][extract_layer]
 
-            if isinstance(network_layer, torch.nn.Sequential):
+            if isinstance(network_layer, torch.nn.Sequential): #isinstance(obj, Class)：判断 obj 是不是 Class 类型（或其子类）。
                 self.backbone.hook_handles.append(
                     network_layer[-1].register_forward_hook(forward_hook)
-                )
+                ) # 如果是 Sequential 容器，就给最后一层注册 hook
             else:
                 self.backbone.hook_handles.append(
                     network_layer.register_forward_hook(forward_hook)
-                )
-        self.to(self.device)
+                ) # 否则直接给该层注册 hook
+        self.to(self.device) #必须等 hook 全部注册完后再移动到 GPU/CPU
 
-    def forward(self, images):
+    def forward(self, images): #因为这个类继承了 nn.Module，作为一个“新模型”，它必须实现 forward()，这样你才能像用模型一样用它：features = aggregator(images)。
         self.outputs.clear()
         with torch.no_grad():
             # The backbone will throw an Exception once it reached the last
@@ -284,14 +298,18 @@ class NetworkFeatureAggregator(torch.nn.Module):
                 pass
         return self.outputs
 
-    def feature_dimensions(self, input_shape):
+    def feature_dimensions(self, input_shape): #自动推理每个要提取的层的特征维度（通道数 C）。
         """Computes the feature dimensions for all layers given input_shape."""
-        _input = torch.ones([1] + list(input_shape)).to(self.device)
-        _output = self(_input)
-        return [_output[layer].shape[1] for layer in self.layers_to_extract_from]
+        _input = torch.ones([1] + list(input_shape)).to(self.device) # 构造一个假的输入张量（batch_size=1）
+        _output = self(_input) # 前向传播一次，触发 hook，把中间特征存到 self.outputs
+        return [_output[layer].shape[1] for layer in self.layers_to_extract_from] # 返回每个层的通道数
 
 
 class ForwardHook:
+    """
+    把当前层的输出 output 存到一个字典 hook_dict 里，键是 layer_name。
+    如果这个层刚好是你指定的 “最后一个要提取的层”，就 抛出一个自定义异常 LastLayerToExtractReachedException，用这种方式强行中断后续的 forward（因为之后的层你不关心了）
+    """
     def __init__(self, hook_dict, layer_name: str, last_layer_to_extract: str):
         self.hook_dict = hook_dict
         self.layer_name = layer_name
@@ -299,7 +317,7 @@ class ForwardHook:
             layer_name == last_layer_to_extract
         )
 
-    def __call__(self, module, input, output):
+    def __call__(self, module, input, output): #只有定义了 __call__() 的类实例才可以像函数一样调用
         self.hook_dict[self.layer_name] = output
         if self.raise_exception_to_break:
             raise LastLayerToExtractReachedException()
