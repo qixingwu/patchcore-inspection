@@ -144,6 +144,9 @@ class ConcatMerger(_BaseMerger):
 
 
 class Preprocessing(torch.nn.Module): # 特征预处理模块，把每个层的特征都映射到同一维度。
+    """
+    先把每个层的原始高维卷积 patch 特征压缩到一个统一、较小的预训练嵌入空间，让后面的 Aggregator 更好、更快地做层融合
+    """
     def __init__(self, input_dims, output_dim): #对每个输入分支（不同层/不同特征源）放一个 MeanMapper。
         super(Preprocessing, self).__init__()
         self.input_dims = input_dims

@@ -33,29 +33,36 @@ def main(**kwargs):
     pass
 
 
-@main.result_callback()
+@main.result_callback() # 把子命令的返回值收集到 methods 里
 def run(
     methods,
-    results_path,
-    gpu,
-    seed,
-    log_group,
-    log_project,
-    save_segmentation_images,
-    save_patchcore_model,
+    results_path,# results_path = 'results'
+    gpu, # gpu = (0,)
+    seed, # seed = 0
+    log_group,# log_group = 'IM224_WR50_L2-3_P01_D1024-1024_PS-3_AN-1_S0'
+    log_project, # log_project = 'MVTecAD_Results'
+    save_segmentation_images,# save_segmentation_images = False
+    save_patchcore_model, # save_patchcore_model = True
 ):
     methods = {key: item for (key, item) in methods}
-
+    """
+    methods = [
+    ('get_patchcore', <function patch_core.<locals>.get_patchcore at ...>),
+    ('get_sampler', <function sampler.<locals>.get_sampler at ...>),
+    ('get_dataloaders', <function dataset.<locals>.get_dataloaders at ...>)
+]
+    """
     run_save_path = patchcore.utils.create_storage_folder(
         results_path, log_project, log_group, mode="iterate"
-    )
+    ) # run_save_path = 'results/MVTecAD_Results/IM224_WR50_L2-3_P01_D1024-1024_PS-3_AN-1_S0_2'
 
     list_of_dataloaders = methods["get_dataloaders"](seed)
 
-    device = patchcore.utils.set_torch_device(gpu)
+    device = patchcore.utils.set_torch_device(gpu) # device = device(type='cuda',index=0),gpu = (0,)
     # Device context here is specifically set and used later
     # because there was GPU memory-bleeding which I could only fix with
     # context managers.
+    #这里必须显式创建一个 CUDA 设备上下文（with 块），否则 PatchCore 在多次推理中会出现 GPU 内存泄漏（memory bleeding），即用完的显存无法被自动释放。
     device_context = (
         torch.cuda.device("cuda:{}".format(device.index))
         if "cuda" in device.type.lower()
@@ -273,7 +280,7 @@ def patch_core(
     faiss_on_gpu,
     faiss_num_workers,
 ):
-    backbone_names = list(backbone_names) #Click 的 multiple=True 选项会把参数当元组，这里转成 list，后续好处理。
+    backbone_names = list(backbone_names) #Click 的 multiple=True 选项会把参数当元组，这里转成 list，后续好处理。 backbone_names = ('wideresnet50',)
     if len(backbone_names) > 1:
         layers_to_extract_from_coll = [[] for _ in range(len(backbone_names))]
         for layer in layers_to_extract_from:
@@ -281,9 +288,10 @@ def patch_core(
             layer = ".".join(layer.split(".")[1:])
             layers_to_extract_from_coll[idx].append(layer)
     else:
-        layers_to_extract_from_coll = [layers_to_extract_from]
+        layers_to_extract_from_coll = [layers_to_extract_from] #layers_to_extract_from = ('layer2', 'layer3')
 
-    def get_patchcore(input_shape, sampler, device):
+    def get_patchcore(input_shape, sampler, device): 
+        #get_patchcore 这个“内置函数”在定义时就把外层的变量一起“打包”进去了，以后调用它的时候会直接用你在 patch_core() 里处理好的这些值。
         loaded_patchcores = []
         for backbone_name, layers_to_extract_from in zip(
             backbone_names, layers_to_extract_from_coll
@@ -343,18 +351,18 @@ def sampler(name, percentage):
 @click.option("--imagesize", default=224, type=int, show_default=True)
 @click.option("--augment", is_flag=True)
 def dataset(
-    name,
-    data_path,
-    subdatasets,
-    train_val_split,
-    batch_size,
-    resize,
-    imagesize,
-    num_workers,
-    augment,
+    name, # name = 'mvtec'
+    data_path, # data_path = '/mnt/e/Dataset/mvtec'
+    subdatasets, # subdatasets = ('bottle', 'cable', 'capsule', 'carpet', 'grid', 'hazelnut', 'leather', 'metal_nut', 'pill', 'screw', 'tile', 'toothbrush', 'transistor', 'wood', 'zipper')
+    train_val_split, # train_val_split = 1.0
+    batch_size, # batch_size = 2
+    resize, # resize = 256
+    imagesize, # imagesize = 224
+    num_workers, # num_workers = 8
+    augment, #  augment = False
 ):
-    dataset_info = _DATASETS[name]
-    dataset_library = __import__(dataset_info[0], fromlist=[dataset_info[1]])
+    dataset_info = _DATASETS[name] # dataset_info = ['patchcore.datasets.mvtec', 'MVTecDataset'],_DATASETS = {'mvtec': ['patchcore.datasets.mvtec', 'MVTecDataset']},name = 'mvtec'
+    dataset_library = __import__(dataset_info[0], fromlist=[dataset_info[1]]) #dataset_library = <module 'patchcore.datasets.mvtec'> 动态地加载模块
 
     def get_dataloaders(seed):
         dataloaders = []
@@ -435,18 +443,15 @@ if __name__ == "__main__":
     # # 设置日志系统的基础配置，让程序里的 logging.info(...)、logging.warning(...) 等语句能在控制台输出。
     # logging.basicConfig(level=logging.INFO)
 
-    # --------------------------
-    import datetime
-
     # ===== 交互选择日志去向 =====
     try:
-        choice = input("日志输出到哪里？[yes=控制台, no=文件, 回车=控制台+文件] ").strip().lower()
+        choice = input("日志输出到哪里？[yes=控制台, no=文件, 回车=控制台+文件] ").strip().lower() 
     except EOFError:
         # 有些非交互环境（比如某些 IDE 配置）拿不到输入，默认双写
         choice = ""
 
     # 日志文件名（你也可以改成放在 results 目录，简单起见先放当前目录）
-    log_file = os.path.abspath("../log/patchcore_run.log")
+    log_file = os.path.abspath("./log/patchcore_run.log")
 
     # 拿到 root logger 并清空默认 handler，避免重复打印
     logger = logging.getLogger()

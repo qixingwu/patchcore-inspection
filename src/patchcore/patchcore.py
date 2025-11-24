@@ -44,30 +44,30 @@ class PatchCore(torch.nn.Module):
         """
         配好模型结构
         """
-        self.backbone = backbone.to(device)
+        self.backbone = backbone.to(device) 
         self.layers_to_extract_from = layers_to_extract_from
         self.input_shape = input_shape
 
         self.device = device
-        self.patch_maker = PatchMaker(patchsize, stride=patchstride)
+        self.patch_maker = PatchMaker(patchsize, stride=patchstride) # 用于把特征图切成 patch 的工具类
 
-        self.forward_modules = torch.nn.ModuleDict({})
+        self.forward_modules = torch.nn.ModuleDict({}) # 存放 PatchCore 前向流程中用到的各个模块
 
         feature_aggregator = patchcore.common.NetworkFeatureAggregator(
             self.backbone, self.layers_to_extract_from, self.device
-        )
-        feature_dimensions = feature_aggregator.feature_dimensions(input_shape)
-        self.forward_modules["feature_aggregator"] = feature_aggregator
+        ) # 用于从 backbone 抽取多层特征的工具类
+        feature_dimensions = feature_aggregator.feature_dimensions(input_shape) # 计算每一层抽取出来的通道数，知道通道数，才能在后续通道上对齐进行拼接
+        self.forward_modules["feature_aggregator"] = feature_aggregator 
 
         preprocessing = patchcore.common.Preprocessing(
             feature_dimensions, pretrain_embed_dimension
-        )
+        ) # 用于把多层 patch 特征预处理成统一维度向量的工具类
         self.forward_modules["preprocessing"] = preprocessing
 
         self.target_embed_dimension = target_embed_dimension
         preadapt_aggregator = patchcore.common.Aggregator(
             target_dim=target_embed_dimension
-        ) 
+        )  # 用于把多层预处理后的特征整合成最终向量的工具类
 
         _ = preadapt_aggregator.to(self.device)
 
@@ -75,11 +75,11 @@ class PatchCore(torch.nn.Module):
 
         self.anomaly_scorer = patchcore.common.NearestNeighbourScorer(
             n_nearest_neighbours=anomaly_score_num_nn, nn_method=nn_method
-        )
+        ) # 用于用 KNN 打分的工具类
 
         self.anomaly_segmentor = patchcore.common.RescaleSegmentor(
             device=self.device, target_size=input_shape[-2:]
-        )
+        ) # 用于把 patch 分数变成像素级掩码的工具类
 
         self.featuresampler = featuresampler
 
@@ -159,7 +159,7 @@ class PatchCore(torch.nn.Module):
 
         # As different feature backbones & patching provide differently
         # sized features, these are brought into the correct form here.
-        features = self.forward_modules["preprocessing"](features) # Preprocessing 不是对“每个 patch 降维”，而是对“每个层的所有 patch 特征做线性映射 + 求平均”，最终得到每层一个 embedding 向量（D_pretrain）。
+        features = self.forward_modules["preprocessing"](features) # 把“每层的所有 patch 特征”从高维卷积特征 [C_i, P, P],压缩成统一维度 D_pre 的向量，并把每层结果堆叠起来使输出变成：[N_patches, n_layers, D_pre]。
         features = self.forward_modules["preadapt_aggregator"](features) # 把多层特征整合成一个统一长度的向量，[B * H_ref * W_ref, D_pretrain] -> [B * H_ref * W_ref, D_target]
 
         if provide_patch_shapes:

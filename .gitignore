@@ -1,4 +1,6 @@
 .idea/
+.vscode/
+log/
 __pycache__/
 LabletAnomaly.egg-info/
 
