@@ -58,7 +58,7 @@ def run(
 
     list_of_dataloaders = methods["get_dataloaders"](seed)
 
-    device = patchcore.utils.set_torch_device(gpu) # device = device(type='cuda',index=0),gpu = (0,)
+    device = patchcore.utils.set_torch_device(gpu) # device = device(type='cuda',index=0),gpu = (0,) 
     # Device context here is specifically set and used later
     # because there was GPU memory-bleeding which I could only fix with
     # context managers.
@@ -66,11 +66,11 @@ def run(
     device_context = (
         torch.cuda.device("cuda:{}".format(device.index))
         if "cuda" in device.type.lower()
-        else contextlib.suppress()
+        else contextlib.suppress() # Python 标准库里提供的 一个“空的上下文管理器”
     )
 
     result_collect = []
-
+    # 遍历数据集: 开始循环，依次处理每一个子数据集（例如 bottle, cable 等）。result_collect 用于收集每个数据集的评估指标。
     for dataloader_count, dataloaders in enumerate(list_of_dataloaders):
         LOGGER.info(
             "Evaluating dataset [{}] ({}/{})...".format(
@@ -79,14 +79,15 @@ def run(
                 len(list_of_dataloaders),
             )
         )
-
+        # 固定种子: 在处理每个数据集开始前重新固定随机种子，确保每个数据集的训练过程都是独立且可复现的。
+        #Python 中,只要对象不是空的、不是 0、不是 None，就会被当作 True。
         patchcore.utils.fix_seeds(seed, device)
 
-        dataset_name = dataloaders["training"].name
+        dataset_name = dataloaders["training"].name # dataset_name = 'mvtec_bottle'
 
         with device_context:
-            torch.cuda.empty_cache()
-            imagesize = dataloaders["training"].dataset.imagesize
+            torch.cuda.empty_cache() # 释放之前可能占用的显存
+            imagesize = dataloaders["training"].dataset.imagesize # imagesize = (3, 224, 224)
             sampler = methods["get_sampler"](
                 device,
             )
@@ -365,17 +366,23 @@ def dataset(
     dataset_library = __import__(dataset_info[0], fromlist=[dataset_info[1]]) #dataset_library = <module 'patchcore.datasets.mvtec'> 动态地加载模块
 
     def get_dataloaders(seed):
+        """
+        根据给定的种子（seed）和全局配置，为每一个子数据集（subdataset）分别创建训练集、测试集和验证集的数据加载器。
+        它接受一个参数 seed（随机种子），通常用于保证数据分割和增强的可复现性。
+        """
         dataloaders = []
+        # subdatasets 是一个在函数外部定义的列表（全局变量），里面包含不同的类别名称（例如 ['bottle', 'cable', 'capsule']）。代码会为列表中的每一个类别分别创建一套数据加载器。
         for subdataset in subdatasets:
+            #等价于DatasetClass = getattr(dataset_library, dataset_info[1])
             train_dataset = dataset_library.__dict__[dataset_info[1]](
-                data_path,
-                classname=subdataset,
-                resize=resize,
-                train_val_split=train_val_split,
-                imagesize=imagesize,
-                split=dataset_library.DatasetSplit.TRAIN,
-                seed=seed,
-                augment=augment,
+                data_path, # data_path = '/mnt/e/Dataset/mvtec'
+                classname=subdataset, # classname = 'bottle'（当前循环的子数据集名称）
+                resize=resize, # resize = 256
+                train_val_split=train_val_split, # train_val_split = 1.0
+                imagesize=imagesize, # imagesize = 224
+                split=dataset_library.DatasetSplit.TRAIN, # split = 'train'（表示这是训练集）
+                seed=seed, # seed = 0
+                augment=augment, # augment = False
             )
 
             test_dataset = dataset_library.__dict__[dataset_info[1]](
@@ -388,11 +395,11 @@ def dataset(
             )
 
             train_dataloader = torch.utils.data.DataLoader(
-                train_dataset,
-                batch_size=batch_size,
-                shuffle=False,
+                train_dataset, # train_dataset = <patchcore.datasets.mvtec.MVTecDataset object at 0x7ec6f807a5b0>
+                batch_size=batch_size, # batch_size = 2
+                shuffle=False, # 训练集通常会打乱顺序以增加数据多样性，但这里设为 False 可能是因为某些特殊需求
                 num_workers=num_workers,
-                pin_memory=True,
+                pin_memory=True, # 将数据锁在内存中，加快数据从 CPU 传输到 GPU 的速度。
             )
 
             test_dataloader = torch.utils.data.DataLoader(
@@ -440,6 +447,7 @@ def dataset(
 
 
 if __name__ == "__main__":
+
     # # 设置日志系统的基础配置，让程序里的 logging.info(...)、logging.warning(...) 等语句能在控制台输出。
     # logging.basicConfig(level=logging.INFO)
 

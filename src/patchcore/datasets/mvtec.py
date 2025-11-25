@@ -39,6 +39,10 @@ class DatasetSplit(Enum):
 class MVTecDataset(torch.utils.data.Dataset):
     """
     PyTorch Dataset for MVTec.
+    DataLoader 的核心要求是：传入的对象必须实现以下两个方法：
+      - __len__(): 返回数据集的大小（样本数量）。
+      - __getitem__(idx): 根据索引 idx 返回对应的样本数据。
+    任何自定义的 Dataset，只要继承了 PyTorch 的 Dataset，就具备这两个方法。
     """
 
     def __init__(
